@@ -1,0 +1,50 @@
+name: Security PoC - Shell Injection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-shell-injection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create fake auggie executable
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          cat > "$RUNNER_TEMP/bin/auggie" <<'EOF'
+          #!/usr/bin/env bash
+          echo "fake auggie called with: $*" >&2
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/bin/auggie"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Run action entrypoint with benign payload
+        continue-on-error: true
+        env:
+          INPUT_AUGMENT_SESSION_AUTH: '{"accessToken":"dummy","tenantURL":"https://example.invalid"}'
+          INPUT_INSTRUCTION: 'poc $(touch /tmp/augment_agent_poc_marker)'
+        run: npx tsx ./src/index.ts
+
+      - name: Check whether command substitution executed
+        if: always()
+        run: |
+          if [ -f /tmp/augment_agent_poc_marker ]; then
+            echo "VULNERABLE: marker file exists; command substitution executed."
+            exit 1
+          fi
+
+          echo "NOT_REPRODUCED: marker file does not exist."
